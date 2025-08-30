@@ -3,26 +3,17 @@
 
 package rnxa
 
-/*
-#cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Metal -framework Foundation
-
-#include "internal/metal/metal_ops.h"
-*/
-import "C"
-
 // DetectDevices discovers available Metal devices (Darwin only)
 func DetectDevices() []Device {
 	var devices []Device
 
-	// Try to create Metal device using the same functions as metal engine
-	metalDevice := C.metal_create_device()
+	// Try to create Metal device using wrapper functions
+	metalDevice := metalCreateDevice()
 	if metalDevice != nil {
-		defer C.metal_release_device(metalDevice)
+		defer metalReleaseDevice(metalDevice)
 
-		namePtr := C.get_device_name_safe(metalDevice)
-		name := C.GoString(namePtr)
-		cores := int(C.get_device_cores_safe(metalDevice))
+		name := metalGetDeviceNameSafe(metalDevice)
+		cores := metalGetDeviceCoresSafe(metalDevice)
 		memory := estimateDeviceMemory(name)
 
 		device := Device{

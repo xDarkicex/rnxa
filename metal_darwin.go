@@ -3,43 +3,44 @@
 
 package rnxa
 
-/*
-#cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Metal -framework MetalPerformanceShaders -framework Foundation
-#cgo darwin SOURCES: internal/metal/metal_ops.m
-
-#include "internal/metal/metal_ops.h"
-*/
-import "C"
 import (
 	"context"
 	"fmt"
-	"unsafe"
 )
 
 type metalEngine struct {
 	device       Device
-	metalDevice  C.MTLDeviceRef
-	commandQueue C.MTLCommandQueueRef
+	metalDevice  interface{} // Store as interface{} to hold CGO type
+	commandQueue interface{} // Store as interface{} to hold CGO type
 }
 
 func newMetalEngine(device Device) (ComputeEngine, error) {
-	metalDevice := C.metal_create_device()
+	metalDevice := metalCreateDevice()
 	if metalDevice == nil {
 		return nil, fmt.Errorf("failed to create Metal device")
 	}
 
-	commandQueue := C.metal_create_command_queue(metalDevice)
+	commandQueue := metalCreateCommandQueue(metalDevice)
 	if commandQueue == nil {
-		C.metal_release_device(metalDevice)
+		metalReleaseDevice(metalDevice)
 		return nil, fmt.Errorf("failed to create Metal command queue")
 	}
 
 	return &metalEngine{
 		device:       device,
-		metalDevice:  metalDevice,
-		commandQueue: commandQueue,
+		metalDevice:  metalDevice,  // Store CGO type directly
+		commandQueue: commandQueue, // Store CGO type directly
 	}, nil
+}
+
+// Helper function to get CGO device reference
+func (e *metalEngine) getMetalDevice() interface{} {
+	return e.metalDevice
+}
+
+// Helper function to get CGO command queue reference
+func (e *metalEngine) getCommandQueue() interface{} {
+	return e.commandQueue
 }
 
 // Matrix multiplication - Core MLP operation
@@ -68,12 +69,11 @@ func (e *metalEngine) MatMul(ctx context.Context, A, B *Tensor) (*Tensor, error)
 		B_f32[i] = float32(v)
 	}
 
-	result := C.metal_matrix_multiply(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&A_f32[0])), C.int(M), C.int(K1),
-		(*C.float)(unsafe.Pointer(&B_f32[0])), C.int(K2), C.int(N),
-		(*C.float)(unsafe.Pointer(&C_f32[0])),
+	result := metalMatrixMultiply(
+		e.getMetalDevice(), e.getCommandQueue(),
+		A_f32, M, K1,
+		B_f32, K2, N,
+		C_f32,
 	)
 
 	if result != 0 {
@@ -108,13 +108,9 @@ func (e *metalEngine) VectorAdd(ctx context.Context, A, B *Tensor) (*Tensor, err
 		B_f32[i] = float32(v)
 	}
 
-	ret := C.metal_vector_add(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&A_f32[0])),
-		(*C.float)(unsafe.Pointer(&B_f32[0])),
-		(*C.float)(unsafe.Pointer(&C_f32[0])),
-		C.int(A.Size()),
+	ret := metalVectorAdd(
+		e.getMetalDevice(), e.getCommandQueue(),
+		A_f32, B_f32, C_f32, A.Size(),
 	)
 
 	if ret != 0 {
@@ -147,13 +143,9 @@ func (e *metalEngine) VectorSub(ctx context.Context, A, B *Tensor) (*Tensor, err
 		B_f32[i] = float32(v)
 	}
 
-	ret := C.metal_vector_sub(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&A_f32[0])),
-		(*C.float)(unsafe.Pointer(&B_f32[0])),
-		(*C.float)(unsafe.Pointer(&C_f32[0])),
-		C.int(A.Size()),
+	ret := metalVectorSub(
+		e.getMetalDevice(), e.getCommandQueue(),
+		A_f32, B_f32, C_f32, A.Size(),
 	)
 
 	if ret != 0 {
@@ -185,13 +177,9 @@ func (e *metalEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, err
 		B_f32[i] = float32(v)
 	}
 
-	ret := C.metal_vector_mul(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&A_f32[0])),
-		(*C.float)(unsafe.Pointer(&B_f32[0])),
-		(*C.float)(unsafe.Pointer(&C_f32[0])),
-		C.int(A.Size()),
+	ret := metalVectorMul(
+		e.getMetalDevice(), e.getCommandQueue(),
+		A_f32, B_f32, C_f32, A.Size(),
 	)
 
 	if ret != 0 {
@@ -216,12 +204,9 @@ func (e *metalEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
 		X_f32[i] = float32(v)
 	}
 
-	success := C.metal_relu(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&X_f32[0])),
-		(*C.float)(unsafe.Pointer(&Y_f32[0])),
-		C.int(X.Size()),
+	success := metalReLU(
+		e.getMetalDevice(), e.getCommandQueue(),
+		X_f32, Y_f32, X.Size(),
 	)
 
 	if success != 0 {
@@ -245,12 +230,9 @@ func (e *metalEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
 		X_f32[i] = float32(v)
 	}
 
-	success := C.metal_sigmoid(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&X_f32[0])),
-		(*C.float)(unsafe.Pointer(&Y_f32[0])),
-		C.int(X.Size()),
+	success := metalSigmoid(
+		e.getMetalDevice(), e.getCommandQueue(),
+		X_f32, Y_f32, X.Size(),
 	)
 
 	if success != 0 {
@@ -274,12 +256,9 @@ func (e *metalEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
 		X_f32[i] = float32(v)
 	}
 
-	success := C.metal_tanh(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&X_f32[0])),
-		(*C.float)(unsafe.Pointer(&Y_f32[0])),
-		C.int(X.Size()),
+	success := metalTanh(
+		e.getMetalDevice(), e.getCommandQueue(),
+		X_f32, Y_f32, X.Size(),
 	)
 
 	if success != 0 {
@@ -303,12 +282,9 @@ func (e *metalEngine) Softmax(ctx context.Context, X *Tensor) (*Tensor, error) {
 		X_f32[i] = float32(v)
 	}
 
-	success := C.metal_softmax(
-		e.metalDevice,
-		e.commandQueue,
-		(*C.float)(unsafe.Pointer(&X_f32[0])),
-		(*C.float)(unsafe.Pointer(&Y_f32[0])),
-		C.int(X.Size()),
+	success := metalSoftmax(
+		e.getMetalDevice(), e.getCommandQueue(),
+		X_f32, Y_f32, X.Size(),
 	)
 
 	if success != 0 {
@@ -338,17 +314,19 @@ func (e *metalEngine) Available() bool { return e.metalDevice != nil }
 
 func (e *metalEngine) Memory() MemoryInfo {
 	return MemoryInfo{
-		Total:     uint64(C.metal_get_total_memory(e.metalDevice)),
-		Available: uint64(C.metal_get_available_memory(e.metalDevice)),
+		Total:     metalGetTotalMemory(e.getMetalDevice()),
+		Available: metalGetAvailableMemory(e.getMetalDevice()),
 	}
 }
 
 func (e *metalEngine) Close() error {
 	if e.commandQueue != nil {
-		C.metal_release_command_queue(e.commandQueue)
+		metalReleaseCommandQueue(e.getCommandQueue())
+		e.commandQueue = nil
 	}
 	if e.metalDevice != nil {
-		C.metal_release_device(e.metalDevice)
+		metalReleaseDevice(e.getMetalDevice())
+		e.metalDevice = nil
 	}
 	return nil
 }
