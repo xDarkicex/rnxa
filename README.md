@@ -472,7 +472,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 *Built with ❤️ for the Go ML community*
 
-**[Get Started](https://github.com/xDarkicex/rnxa#quick-start) -  [Documentation](https://docs.rnxa.dev) -  [Examples](https://github.com/xDarkicex/rnxa/tree/main/examples)**
+**[Get Started](https://github.com/xDarkicex/rnxa#-quick-start) -  [Documentation](https://docs.rnxa.dev) -  [Examples](https://github.com/xDarkicex/rnxa/tree/main/examples)**
 
 </div>
 
