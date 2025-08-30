@@ -6,6 +6,7 @@
 [![Objective-C](https://img.shields.io/badge/language-Objective--C-orange.svg)](https://developer.apple.com/documentation/objectivec)
 [![Apple Developer](https://img.shields.io/badge/Developer-Apple-lightgrey.svg)](https://developer.apple.com)
 [![Metal](https://img.shields.io/badge/graphics-Metal-blue.svg)](https://developer.apple.com/metal/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
  engine that leverages Apple's Metal Performance Shaders to dramatically speed up tensor operations in Go.*
 
