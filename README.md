@@ -6,6 +6,7 @@
 [![Objective-C](https://img.shields.io/badge/language-Objective--C-orange.svg)](https://developer.apple.com/documentation/objectivec)
 [![Apple Developer](https://img.shields.io/badge/Developer-Apple-lightgrey.svg)](https://developer.apple.com)
 [![Metal](https://img.shields.io/badge/graphics-Metal-blue.svg)](https://developer.apple.com/metal/)
+
  engine that leverages Apple's Metal Performance Shaders to dramatically speed up tensor operations in Go.*
 
 **rnxa** (pronounced "RNA") provides hardware-accelerated tensor operations for machine learning workloads in Go. Initially developed to accelerate the [relux](https://github.com/xDarkicex/relux) neural network framework, rnxa is designed as a universal compute backend that can integrate with any Go ML framework.
