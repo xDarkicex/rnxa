@@ -1,7 +1,7 @@
 # **rnxa** - Hardware-Accelerated ML Compute Engine for Go
 
-[![Go Reference](https://pkg.go.dev/badge/example.com/your-repo.svg)](https://pkg.go.dev/example.com/your-repo)
-[![Go Report Card](https://goreportcard.com/badge/github.com/your-username/your-repo)](https://goreportcard.com/report/github.com/your-username/your-repo)
+[![Go Reference](https://pkg.go.dev/badge/github.com/xDarkicex/rnxa.svg)](https://pkg.go.dev/github.com/xDarkicex/rnxa)
+[![Go Report Card](https://goreportcard.com/badge/github.com/xDarkicex/rnxa)](https://goreportcard.com/report/github.com/xDarkicex/rnxa)
 [![Go Version](https://img.shields.io/badge/go-1.25+-blue.svg)](https://golang.org)
 [![Objective-C](https://img.shields.io/badge/language-Objective--C-orange.svg)](https://developer.apple.com/documentation/objectivec)
 [![Apple Developer](https://img.shields.io/badge/Developer-Apple-lightgrey.svg)](https://developer.apple.com)
