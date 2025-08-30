@@ -18,16 +18,28 @@ void metal_release_command_queue(MTLCommandQueueRef queue);
 size_t metal_get_total_memory(MTLDeviceRef device);
 size_t metal_get_available_memory(MTLDeviceRef device);
 
-// Core operations
+// Core MLP operations
 int metal_matrix_multiply(MTLDeviceRef device, MTLCommandQueueRef queue,
                          const float* A, int M, int K,
                          const float* B, int K2, int N,
                          float* C);
 
+// Vector operations for bias addition
+int metal_vector_add(MTLDeviceRef device, MTLCommandQueueRef queue,
+                     const float* A, const float* B, float* C, int size);
+int metal_vector_sub(MTLDeviceRef device, MTLCommandQueueRef queue,
+                     const float* A, const float* B, float* C, int size);
+int metal_vector_mul(MTLDeviceRef device, MTLCommandQueueRef queue,
+                     const float* A, const float* B, float* C, int size);
+
+// MLP activation functions
 int metal_relu(MTLDeviceRef device, MTLCommandQueueRef queue,
                const float* input, float* output, int size);
-
 int metal_sigmoid(MTLDeviceRef device, MTLCommandQueueRef queue,
+                  const float* input, float* output, int size);
+int metal_tanh(MTLDeviceRef device, MTLCommandQueueRef queue,
+               const float* input, float* output, int size);
+int metal_softmax(MTLDeviceRef device, MTLCommandQueueRef queue,
                   const float* input, float* output, int size);
 
 #endif
