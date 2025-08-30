@@ -6,8 +6,9 @@ package rnxa
 /*
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Metal -framework MetalPerformanceShaders -framework Foundation
+#cgo darwin SOURCES: internal/metal/metal_ops.m
 
-#include "../internal/metal/metal_ops.h"
+#include "internal/metal/metal_ops.h"
 */
 import "C"
 import (
