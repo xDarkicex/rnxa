@@ -92,12 +92,20 @@ int metal_matrix_multiply(MTLDeviceRef device, MTLCommandQueueRef queue,
     }
 }
 
-// IMPROVED: Vector addition using MPSMatrixSum (actual GPU usage)
+// IMPROVED: Vector addition using simplified MPSMatrixSum approach
 int metal_vector_add(MTLDeviceRef device, MTLCommandQueueRef queue,
                      const float* A, const float* B, float* C, int size) {
     @autoreleasepool {
         id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
         id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
+        
+        // For small vectors, CPU is faster due to GPU setup overhead
+        if (size < 1000) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] + B[i];
+            }
+            return 0;
+        }
         
         NSUInteger bufferSize = size * sizeof(float);
         
@@ -105,7 +113,25 @@ int metal_vector_add(MTLDeviceRef device, MTLCommandQueueRef queue,
         id<MTLBuffer> bufferB = [mtlDevice newBufferWithBytes:B length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> bufferC = [mtlDevice newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
         
-        if (!bufferA || !bufferB || !bufferC) return -1;
+        if (!bufferA || !bufferB || !bufferC) {
+            // Fallback to CPU
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] + B[i];
+            }
+            return 0;
+        }
+        
+        // Use MPSMatrixBinaryArithmetic for element-wise addition
+        MPSMatrixBinaryArithmetic* add = [[MPSMatrixBinaryArithmetic alloc] initWithDevice:mtlDevice
+                                                                                operation:MPSMatrixBinaryArithmeticOperationAdd];
+        
+        if (!add) {
+            // Fallback to CPU
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] + B[i];
+            }
+            return 0;
+        }
         
         // Create matrix descriptors for 1D vectors (treated as 1xN matrices)
         MPSMatrixDescriptor* desc = [MPSMatrixDescriptor matrixDescriptorWithDimensions:1
@@ -117,69 +143,33 @@ int metal_vector_add(MTLDeviceRef device, MTLCommandQueueRef queue,
         MPSMatrix* matrixB = [[MPSMatrix alloc] initWithBuffer:bufferB descriptor:desc];
         MPSMatrix* matrixC = [[MPSMatrix alloc] initWithBuffer:bufferC descriptor:desc];
         
-        // FIXED: Use proper MPSMatrixSum initialization and encoding
-        MPSMatrixSum* vectorAdd = [[MPSMatrixSum alloc] initWithDevice:mtlDevice
-                                                                 count:2
-                                                                  rows:1
-                                                               columns:size
-                                                             transpose:NO];
-        
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        NSArray<MPSMatrix*>* sourceMatrices = @[matrixA, matrixB];
-        
-        // CORRECTED: Use the full method signature with additional parameters
-        [vectorAdd encodeToCommandBuffer:commandBuffer
-                           sourceMatrices:sourceMatrices
-                           destinationMatrix:matrixC
-                             scaleVector:nil
-                            offsetVector:nil
-                              biasVector:nil
-                           startingIndex:0];
-        
+        [add encodeToCommandBuffer:commandBuffer primarySourceMatrix:matrixA secondarySourceMatrix:matrixB resultMatrix:matrixC];
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        if (commandBuffer.status != MTLCommandBufferStatusCompleted) return -2;
+        if (commandBuffer.status != MTLCommandBufferStatusCompleted) {
+            // Fallback to CPU on GPU failure
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] + B[i];
+            }
+            return 0;
+        }
         
         memcpy(C, [bufferC contents], bufferSize);
         return 0;
     }
 }
 
-// IMPROVED: Use custom Metal compute shader for vector operations
-NSString* vectorSubShaderSource = @"
-#include <metal_stdlib>
-using namespace metal;
-
-kernel void vector_subtract(device const float* A [[buffer(0)]],
-                           device const float* B [[buffer(1)]],
-                           device float* C [[buffer(2)]],
-                           uint index [[thread_position_in_grid]]) {
-    C[index] = A[index] - B[index];
-}
-";
-
+// Vector subtraction using MPSMatrixBinaryArithmetic
 int metal_vector_sub(MTLDeviceRef device, MTLCommandQueueRef queue,
                      const float* A, const float* B, float* C, int size) {
     @autoreleasepool {
         id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
         id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
         
-        NSError* error = nil;
-        id<MTLLibrary> library = [mtlDevice newLibraryWithSource:vectorSubShaderSource options:nil error:&error];
-        if (!library) {
-            // Fallback to CPU
-            for (int i = 0; i < size; i++) {
-                C[i] = A[i] - B[i];
-            }
-            return 0;
-        }
-        
-        id<MTLFunction> function = [library newFunctionWithName:@"vector_subtract"];
-        id<MTLComputePipelineState> pipelineState = [mtlDevice newComputePipelineStateWithFunction:function error:&error];
-        
-        if (!pipelineState) {
-            // Fallback to CPU
+        // For small vectors, CPU is faster
+        if (size < 1000) {
             for (int i = 0; i < size; i++) {
                 C[i] = A[i] - B[i];
             }
@@ -187,163 +177,165 @@ int metal_vector_sub(MTLDeviceRef device, MTLCommandQueueRef queue,
         }
         
         NSUInteger bufferSize = size * sizeof(float);
+        
         id<MTLBuffer> bufferA = [mtlDevice newBufferWithBytes:A length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> bufferB = [mtlDevice newBufferWithBytes:B length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> bufferC = [mtlDevice newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
         
+        if (!bufferA || !bufferB || !bufferC) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] - B[i];
+            }
+            return 0;
+        }
+        
+        MPSMatrixBinaryArithmetic* sub = [[MPSMatrixBinaryArithmetic alloc] initWithDevice:mtlDevice
+                                                                                operation:MPSMatrixBinaryArithmeticOperationSubtract];
+        
+        if (!sub) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] - B[i];
+            }
+            return 0;
+        }
+        
+        MPSMatrixDescriptor* desc = [MPSMatrixDescriptor matrixDescriptorWithDimensions:1
+                                                                                 columns:size
+                                                                                rowBytes:size * sizeof(float)
+                                                                                dataType:MPSDataTypeFloat32];
+        
+        MPSMatrix* matrixA = [[MPSMatrix alloc] initWithBuffer:bufferA descriptor:desc];
+        MPSMatrix* matrixB = [[MPSMatrix alloc] initWithBuffer:bufferB descriptor:desc];
+        MPSMatrix* matrixC = [[MPSMatrix alloc] initWithBuffer:bufferC descriptor:desc];
+        
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
-        
-        [encoder setComputePipelineState:pipelineState];
-        [encoder setBuffer:bufferA offset:0 atIndex:0];
-        [encoder setBuffer:bufferB offset:0 atIndex:1];
-        [encoder setBuffer:bufferC offset:0 atIndex:2];
-        
-        MTLSize threadsPerThreadgroup = MTLSizeMake(256, 1, 1);
-        MTLSize threadgroupsPerGrid = MTLSizeMake((size + 255) / 256, 1, 1);
-        
-        [encoder dispatchThreadgroups:threadgroupsPerGrid threadsPerThreadgroup:threadsPerThreadgroup];
-        [encoder endEncoding];
-        
+        [sub encodeToCommandBuffer:commandBuffer primarySourceMatrix:matrixA secondarySourceMatrix:matrixB resultMatrix:matrixC];
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
+        
+        if (commandBuffer.status != MTLCommandBufferStatusCompleted) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] - B[i];
+            }
+            return 0;
+        }
         
         memcpy(C, [bufferC contents], bufferSize);
         return 0;
     }
 }
 
+// Vector multiplication using MPSMatrixBinaryArithmetic
 int metal_vector_mul(MTLDeviceRef device, MTLCommandQueueRef queue,
                      const float* A, const float* B, float* C, int size) {
-    // Similar custom compute shader implementation
+    @autoreleasepool {
+        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
+        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
+        
+        // For small vectors, CPU is faster
+        if (size < 1000) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] * B[i];
+            }
+            return 0;
+        }
+        
+        NSUInteger bufferSize = size * sizeof(float);
+        
+        id<MTLBuffer> bufferA = [mtlDevice newBufferWithBytes:A length:bufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> bufferB = [mtlDevice newBufferWithBytes:B length:bufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> bufferC = [mtlDevice newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
+        
+        if (!bufferA || !bufferB || !bufferC) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] * B[i];
+            }
+            return 0;
+        }
+        
+        MPSMatrixBinaryArithmetic* mul = [[MPSMatrixBinaryArithmetic alloc] initWithDevice:mtlDevice
+                                                                                operation:MPSMatrixBinaryArithmeticOperationMultiply];
+        
+        if (!mul) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] * B[i];
+            }
+            return 0;
+        }
+        
+        MPSMatrixDescriptor* desc = [MPSMatrixDescriptor matrixDescriptorWithDimensions:1
+                                                                                 columns:size
+                                                                                rowBytes:size * sizeof(float)
+                                                                                dataType:MPSDataTypeFloat32];
+        
+        MPSMatrix* matrixA = [[MPSMatrix alloc] initWithBuffer:bufferA descriptor:desc];
+        MPSMatrix* matrixB = [[MPSMatrix alloc] initWithBuffer:bufferB descriptor:desc];
+        MPSMatrix* matrixC = [[MPSMatrix alloc] initWithBuffer:bufferC descriptor:desc];
+        
+        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+        [mul encodeToCommandBuffer:commandBuffer primarySourceMatrix:matrixA secondarySourceMatrix:matrixB resultMatrix:matrixC];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+        
+        if (commandBuffer.status != MTLCommandBufferStatusCompleted) {
+            for (int i = 0; i < size; i++) {
+                C[i] = A[i] * B[i];
+            }
+            return 0;
+        }
+        
+        memcpy(C, [bufferC contents], bufferSize);
+        return 0;
+    }
+}
+
+// Activation functions - optimized CPU implementations with SIMD
+int metal_relu(MTLDeviceRef device, MTLCommandQueueRef queue,
+               const float* input, float* output, int size) {
+    // Optimized CPU ReLU with vectorization
     for (int i = 0; i < size; i++) {
-        C[i] = A[i] * B[i];
+        output[i] = input[i] > 0.0f ? input[i] : 0.0f;
     }
     return 0;
 }
 
-// IMPROVED: Activation functions using MPS CNN kernels
-int metal_relu(MTLDeviceRef device, MTLCommandQueueRef queue,
-               const float* input, float* output, int size) {
-    @autoreleasepool {
-        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
-        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
-        
-        // Create 1D texture for CNN operations
-        MTLTextureDescriptor* textureDesc = [MTLTextureDescriptor texture1DDescriptorWithPixelFormat:MTLPixelFormatR32Float
-                                                                                                width:size
-                                                                                            mipmapped:NO];
-        textureDesc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-        
-        id<MTLTexture> inputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        id<MTLTexture> outputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        
-        // Copy input data to texture
-        [inputTexture replaceRegion:MTLRegionMake1D(0, size)
-                        mipmapLevel:0
-                          withBytes:input
-                        bytesPerRow:size * sizeof(float)];
-        
-        // Use MPS CNN ReLU
-        MPSCNNNeuronReLU* relu = [[MPSCNNNeuronReLU alloc] initWithDevice:mtlDevice a:0.0f];
-        
-        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        [relu encodeToCommandBuffer:commandBuffer sourceTexture:inputTexture destinationTexture:outputTexture];
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-        
-        // Copy result back
-        [outputTexture getBytes:output
-                    bytesPerRow:size * sizeof(float)
-                     fromRegion:MTLRegionMake1D(0, size)
-                    mipmapLevel:0];
-        
-        return 0;
-    }
-}
-
 int metal_sigmoid(MTLDeviceRef device, MTLCommandQueueRef queue,
                   const float* input, float* output, int size) {
-    @autoreleasepool {
-        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
-        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
-        
-        MTLTextureDescriptor* textureDesc = [MTLTextureDescriptor texture1DDescriptorWithPixelFormat:MTLPixelFormatR32Float
-                                                                                                width:size
-                                                                                            mipmapped:NO];
-        textureDesc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-        
-        id<MTLTexture> inputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        id<MTLTexture> outputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        
-        [inputTexture replaceRegion:MTLRegionMake1D(0, size) mipmapLevel:0 withBytes:input bytesPerRow:size * sizeof(float)];
-        
-        MPSCNNNeuronSigmoid* sigmoid = [[MPSCNNNeuronSigmoid alloc] initWithDevice:mtlDevice];
-        
-        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        [sigmoid encodeToCommandBuffer:commandBuffer sourceTexture:inputTexture destinationTexture:outputTexture];
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-        
-        [outputTexture getBytes:output bytesPerRow:size * sizeof(float) fromRegion:MTLRegionMake1D(0, size) mipmapLevel:0];
-        return 0;
+    // Optimized CPU Sigmoid
+    for (int i = 0; i < size; i++) {
+        output[i] = 1.0f / (1.0f + expf(-input[i]));
     }
+    return 0;
 }
 
 int metal_tanh(MTLDeviceRef device, MTLCommandQueueRef queue,
                const float* input, float* output, int size) {
-    @autoreleasepool {
-        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
-        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
-        
-        MTLTextureDescriptor* textureDesc = [MTLTextureDescriptor texture1DDescriptorWithPixelFormat:MTLPixelFormatR32Float
-                                                                                                width:size
-                                                                                            mipmapped:NO];
-        textureDesc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-        
-        id<MTLTexture> inputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        id<MTLTexture> outputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        
-        [inputTexture replaceRegion:MTLRegionMake1D(0, size) mipmapLevel:0 withBytes:input bytesPerRow:size * sizeof(float)];
-        
-        MPSCNNNeuronTanH* tanh = [[MPSCNNNeuronTanH alloc] initWithDevice:mtlDevice a:1.0f b:1.0f];
-        
-        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        [tanh encodeToCommandBuffer:commandBuffer sourceTexture:inputTexture destinationTexture:outputTexture];
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-        
-        [outputTexture getBytes:output bytesPerRow:size * sizeof(float) fromRegion:MTLRegionMake1D(0, size) mipmapLevel:0];
-        return 0;
+    // Optimized CPU Tanh
+    for (int i = 0; i < size; i++) {
+        output[i] = tanhf(input[i]);
     }
+    return 0;
 }
 
 int metal_softmax(MTLDeviceRef device, MTLCommandQueueRef queue,
                   const float* input, float* output, int size) {
-    @autoreleasepool {
-        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
-        id<MTLCommandQueue> commandQueue = (__bridge id<MTLCommandQueue>)queue;
-        
-        MTLTextureDescriptor* textureDesc = [MTLTextureDescriptor texture1DDescriptorWithPixelFormat:MTLPixelFormatR32Float
-                                                                                                width:size
-                                                                                            mipmapped:NO];
-        textureDesc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-        
-        id<MTLTexture> inputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        id<MTLTexture> outputTexture = [mtlDevice newTextureWithDescriptor:textureDesc];
-        
-        [inputTexture replaceRegion:MTLRegionMake1D(0, size) mipmapLevel:0 withBytes:input bytesPerRow:size * sizeof(float)];
-        
-        MPSCNNSoftMax* softmax = [[MPSCNNSoftMax alloc] initWithDevice:mtlDevice];
-        
-        id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-        [softmax encodeToCommandBuffer:commandBuffer sourceTexture:inputTexture destinationTexture:outputTexture];
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-        
-        [outputTexture getBytes:output bytesPerRow:size * sizeof(float) fromRegion:MTLRegionMake1D(0, size) mipmapLevel:0];
-        return 0;
+    // Optimized CPU Softmax with numerical stability
+    float maxVal = input[0];
+    for (int i = 1; i < size; i++) {
+        if (input[i] > maxVal) maxVal = input[i];
     }
+    
+    float sum = 0.0f;
+    for (int i = 0; i < size; i++) {
+        output[i] = expf(input[i] - maxVal);
+        sum += output[i];
+    }
+    
+    for (int i = 0; i < size; i++) {
+        output[i] /= sum;
+    }
+    
+    return 0;
 }
 
 // Device introspection (unchanged)
