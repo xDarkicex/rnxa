@@ -3,44 +3,31 @@ package rnxa
 /*
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Metal -framework Foundation
-#include <Metal/Metal.h>
-#include <stdlib.h>
 
-const char* get_device_name(void* device) {
-    id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
-    return [mtlDevice.name UTF8String];
-}
+#include "internal/metal/metal_ops.h"
 
-int get_device_cores(void* device) {
-    // Approximate GPU cores based on device name
-    id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
-    NSString* name = mtlDevice.name;
-    if ([name containsString:@"M3 Max"]) return 40;
-    if ([name containsString:@"M3 Pro"]) return 18;
-    if ([name containsString:@"M3"]) return 10;
-    if ([name containsString:@"M2 Max"]) return 38;
-    if ([name containsString:@"M2 Pro"]) return 19;
-    if ([name containsString:@"M2"]) return 10;
-    return 8; // Default estimate
-}
+// Use the same typedefs as metal_ops.h to avoid type conflicts
+const char* get_device_name_safe(MTLDeviceRef device);
+int get_device_cores_safe(MTLDeviceRef device);
 */
 import "C"
-import (
-	"unsafe"
-)
 
 // DetectDevices discovers available Metal devices
 func DetectDevices() []Device {
 	var devices []Device
 
-	// Try to create Metal device
-	metalDevice := C.MTLCreateSystemDefaultDevice()
+	// Use the same Metal device creation as metal_ops.m
+	metalDevice := C.metal_create_device()
 	if metalDevice != nil {
-		defer C.CFRelease(metalDevice)
+		defer C.metal_release_device(metalDevice)
 
-		name := C.GoString(C.get_device_name(unsafe.Pointer(metalDevice)))
-		cores := int(C.get_device_cores(unsafe.Pointer(metalDevice)))
-		memory := uint64(16) * 1024 * 1024 * 1024 // Default 16GB unified memory
+		// Use our safe wrapper functions
+		namePtr := C.get_device_name_safe(metalDevice)
+		name := C.GoString(namePtr)
+		cores := int(C.get_device_cores_safe(metalDevice))
+
+		// Estimate memory based on device name
+		memory := estimateDeviceMemory(name)
 
 		device := Device{
 			ID:       0,
@@ -65,6 +52,49 @@ func DetectDevices() []Device {
 	devices = append(devices, cpuDevice)
 
 	return devices
+}
+
+// Helper function to estimate memory based on device name
+func estimateDeviceMemory(deviceName string) uint64 {
+	// Conservative estimates based on known Apple Silicon configurations
+	switch {
+	case contains(deviceName, "M3 Max"):
+		return 36 * 1024 * 1024 * 1024 // 36GB
+	case contains(deviceName, "M3 Pro"):
+		return 18 * 1024 * 1024 * 1024 // 18GB
+	case contains(deviceName, "M3"):
+		return 16 * 1024 * 1024 * 1024 // 16GB
+	case contains(deviceName, "M2 Max"):
+		return 32 * 1024 * 1024 * 1024 // 32GB
+	case contains(deviceName, "M2 Pro"):
+		return 16 * 1024 * 1024 * 1024 // 16GB
+	case contains(deviceName, "M2"):
+		return 16 * 1024 * 1024 * 1024 // 16GB
+	default:
+		return 16 * 1024 * 1024 * 1024 // 16GB default
+	}
+}
+
+// Simple string contains function
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		(len(s) > len(substr) && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 // GetBestDevice returns the highest performance available device

@@ -342,3 +342,30 @@ int metal_relu(MTLDeviceRef device, MTLCommandQueueRef queue,
         return 0;
     }
 }
+
+// Safe wrapper functions for device introspection
+const char* get_device_name_safe(MTLDeviceRef device) {
+    @autoreleasepool {
+        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
+        if (!mtlDevice) return "Unknown Device";
+        
+        NSString* name = mtlDevice.name;
+        return [name UTF8String];
+    }
+}
+
+int get_device_cores_safe(MTLDeviceRef device) {
+    @autoreleasepool {
+        id<MTLDevice> mtlDevice = (__bridge id<MTLDevice>)device;
+        if (!mtlDevice) return 8;
+        
+        NSString* name = mtlDevice.name;
+        if ([name containsString:@"M3 Max"]) return 40;
+        if ([name containsString:@"M3 Pro"]) return 18;
+        if ([name containsString:@"M3"]) return 10;
+        if ([name containsString:@"M2 Max"]) return 38;
+        if ([name containsString:@"M2 Pro"]) return 19;
+        if ([name containsString:@"M2"]) return 10;
+        return 8; // Default estimate
+    }
+}

@@ -42,4 +42,10 @@ int metal_tanh(MTLDeviceRef device, MTLCommandQueueRef queue,
 int metal_softmax(MTLDeviceRef device, MTLCommandQueueRef queue,
                   const float* input, float* output, int size);
 
+// Add these lines at the end, before #endif
+// Safe device introspection functions
+const char* get_device_name_safe(MTLDeviceRef device);
+int get_device_cores_safe(MTLDeviceRef device);
+
 #endif
+
