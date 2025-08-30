@@ -20,7 +20,9 @@ func metalCreateDevice() C.MTLDeviceRef {
 }
 
 func metalReleaseDevice(device interface{}) {
-	C.metal_release_device(device.(C.MTLDeviceRef))
+	if device != nil {
+		C.metal_release_device(device.(C.MTLDeviceRef))
+	}
 }
 
 func metalCreateCommandQueue(device interface{}) C.MTLCommandQueueRef {
@@ -28,7 +30,9 @@ func metalCreateCommandQueue(device interface{}) C.MTLCommandQueueRef {
 }
 
 func metalReleaseCommandQueue(queue interface{}) {
-	C.metal_release_command_queue(queue.(C.MTLCommandQueueRef))
+	if queue != nil {
+		C.metal_release_command_queue(queue.(C.MTLCommandQueueRef))
+	}
 }
 
 func metalGetDeviceNameSafe(device interface{}) string {
@@ -49,6 +53,9 @@ func metalGetAvailableMemory(device interface{}) uint64 {
 }
 
 func metalMatrixMultiply(device, queue interface{}, A []float32, M, K int, B []float32, K2, N int, C_result []float32) int {
+	if len(A) == 0 || len(B) == 0 || len(C_result) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_matrix_multiply(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -59,6 +66,9 @@ func metalMatrixMultiply(device, queue interface{}, A []float32, M, K int, B []f
 }
 
 func metalVectorAdd(device, queue interface{}, A, B, C_result []float32, size int) int {
+	if len(A) == 0 || len(B) == 0 || len(C_result) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_vector_add(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -70,6 +80,9 @@ func metalVectorAdd(device, queue interface{}, A, B, C_result []float32, size in
 }
 
 func metalVectorSub(device, queue interface{}, A, B, C_result []float32, size int) int {
+	if len(A) == 0 || len(B) == 0 || len(C_result) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_vector_sub(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -81,6 +94,9 @@ func metalVectorSub(device, queue interface{}, A, B, C_result []float32, size in
 }
 
 func metalVectorMul(device, queue interface{}, A, B, C_result []float32, size int) int {
+	if len(A) == 0 || len(B) == 0 || len(C_result) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_vector_mul(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -92,6 +108,9 @@ func metalVectorMul(device, queue interface{}, A, B, C_result []float32, size in
 }
 
 func metalReLU(device, queue interface{}, input, output []float32, size int) int {
+	if len(input) == 0 || len(output) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_relu(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -102,6 +121,9 @@ func metalReLU(device, queue interface{}, input, output []float32, size int) int
 }
 
 func metalSigmoid(device, queue interface{}, input, output []float32, size int) int {
+	if len(input) == 0 || len(output) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_sigmoid(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -112,6 +134,9 @@ func metalSigmoid(device, queue interface{}, input, output []float32, size int) 
 }
 
 func metalTanh(device, queue interface{}, input, output []float32, size int) int {
+	if len(input) == 0 || len(output) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_tanh(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
@@ -122,6 +147,9 @@ func metalTanh(device, queue interface{}, input, output []float32, size int) int
 }
 
 func metalSoftmax(device, queue interface{}, input, output []float32, size int) int {
+	if len(input) == 0 || len(output) == 0 {
+		return -1 // Invalid input
+	}
 	return int(C.metal_softmax(
 		device.(C.MTLDeviceRef),
 		queue.(C.MTLCommandQueueRef),
