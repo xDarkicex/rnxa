@@ -95,3 +95,11 @@ func NewEngineWithDevice(deviceID int) (ComputeEngine, error) {
 		return newCPUEngine(), nil
 	}
 }
+
+func newCUDAEngine(device Device) (ComputeEngine, error) {
+	return nil, fmt.Errorf("CUDA support not implemented yet")
+}
+
+func newOpenCLEngine(device Device) (ComputeEngine, error) {
+	return nil, fmt.Errorf("OpenCL support not implemented yet")
+}
