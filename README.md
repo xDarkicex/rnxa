@@ -111,6 +111,13 @@ func main() {
 }
 ```
 
+### **Engine Lifecycle**
+
+- `NewEngine()` is intended for one-time or lazy initialization. It probes available devices and creates a reusable engine for the best backend.
+- Reuse a single engine across many operations when possible, then call `Close()` during shutdown or collection teardown.
+- Metal-backed engines serialize operations internally and return ordinary Go errors after `Close()` instead of panicking. CPU engines remain available as the fallback backend on non-Darwin systems.
+- Callers that already work in float32 can build tensors with `NewTensorFromFloat32(...)`; `MatMul` will use the native float32 fast path automatically when both inputs are float32-backed.
+
 ***
 
 ## 📖 **Comprehensive Examples**

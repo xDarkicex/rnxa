@@ -2,7 +2,10 @@ package rnxa
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -173,6 +176,231 @@ func TestVectorOperations(t *testing.T) {
 			}
 		}
 		t.Logf("VectorSub test passed on %s", engine.Device().Platform)
+	}
+}
+
+func TestMatMulConcurrentReuse(t *testing.T) {
+	engine, err := NewEngine()
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+	defer engine.Close()
+
+	ctx := context.Background()
+	A := NewTensor([]float64{
+		1, 2, 3,
+		4, 5, 6,
+	}, 2, 3)
+	B := NewTensor([]float64{
+		7,
+		8,
+		9,
+	}, 3, 1)
+	expected := []float64{50, 122}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := engine.MatMul(ctx, A, B)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			for idx, got := range result.Data() {
+				if math.Abs(got-expected[idx]) > 1e-4 {
+					errCh <- fmt.Errorf("result[%d] = %f, expected %f", idx, got, expected[idx])
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}
+
+func TestMatMulAfterCloseReturnsError(t *testing.T) {
+	engine, err := NewEngine()
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	if err := engine.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	A := NewTensor([]float64{1, 2, 3, 4}, 2, 2)
+	B := NewTensor([]float64{5, 6, 7, 8}, 2, 2)
+	_, err = engine.MatMul(context.Background(), A, B)
+	if engine.Device().Platform == "Metal" {
+		if err == nil {
+			t.Fatal("expected error after closing Metal engine")
+		}
+		if !strings.Contains(err.Error(), "closed") {
+			t.Fatalf("expected closed-engine error, got %v", err)
+		}
+		return
+	}
+
+	if err != nil {
+		t.Fatalf("CPU engine should remain usable after Close, got %v", err)
+	}
+}
+
+func TestMatrixVectorDotConsistency(t *testing.T) {
+	engine, err := NewEngine()
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+	defer engine.Close()
+
+	ctx := context.Background()
+	A := NewTensor([]float64{
+		0.25, -1.5, 3.25, 0.75,
+		2.0, 4.5, -0.5, 1.25,
+		-3.0, 0.5, 1.5, 2.5,
+	}, 3, 4)
+	B := NewTensor([]float64{
+		1.25,
+		-0.75,
+		2.5,
+		-1.0,
+	}, 4, 1)
+
+	result, err := engine.MatMul(ctx, A, B)
+	if err != nil {
+		t.Fatalf("MatMul failed: %v", err)
+	}
+
+	expected := []float64{
+		0.25*1.25 + -1.5*-0.75 + 3.25*2.5 + 0.75*-1.0,
+		2.0*1.25 + 4.5*-0.75 + -0.5*2.5 + 1.25*-1.0,
+		-3.0*1.25 + 0.5*-0.75 + 1.5*2.5 + 2.5*-1.0,
+	}
+
+	for i, got := range result.Data() {
+		if math.Abs(got-expected[i]) > 1e-4 {
+			t.Fatalf("dot[%d] = %f, expected %f", i, got, expected[i])
+		}
+	}
+}
+
+func TestMatMulFloat32MatchesFloat64Path(t *testing.T) {
+	engine, err := NewEngine()
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+	defer engine.Close()
+
+	ctx := context.Background()
+	A64 := NewTensor([]float64{
+		1.25, -2.5, 3.75,
+		4.125, 5.5, -6.25,
+	}, 2, 3)
+	B64 := NewTensor([]float64{
+		0.5, -1.25,
+		2.0, 3.0,
+		-4.5, 1.75,
+	}, 3, 2)
+
+	got64, err := engine.MatMul(ctx, A64, B64)
+	if err != nil {
+		t.Fatalf("MatMul failed: %v", err)
+	}
+
+	A32 := NewTensorFromFloat32([]float32{
+		1.25, -2.5, 3.75,
+		4.125, 5.5, -6.25,
+	}, 2, 3)
+	B32 := NewTensorFromFloat32([]float32{
+		0.5, -1.25,
+		2.0, 3.0,
+		-4.5, 1.75,
+	}, 3, 2)
+
+	got32, err := engine.MatMul(ctx, A32, B32)
+	if err != nil {
+		t.Fatalf("MatMul failed: %v", err)
+	}
+
+	for i, v := range got32.Data32() {
+		if math.Abs(float64(v)-got64.Data()[i]) > 1e-4 {
+			t.Fatalf("result[%d] = %f, expected %f", i, v, got64.Data()[i])
+		}
+	}
+}
+
+func TestMatMulFloat32ConcurrentReuse(t *testing.T) {
+	engine, err := NewEngine()
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+	defer engine.Close()
+
+	ctx := context.Background()
+	A := NewTensorFromFloat32([]float32{
+		0.25, 1.5, -3.0,
+		2.25, -0.5, 4.0,
+	}, 2, 3)
+	B := NewTensorFromFloat32([]float32{
+		1.0,
+		-2.0,
+		0.5,
+	}, 3, 1)
+	expected := []float32{-4.25, 5.25}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := engine.MatMul(ctx, A, B)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			for idx, v := range got.Data32() {
+				if math.Abs(float64(v-expected[idx])) > 1e-5 {
+					errCh <- fmt.Errorf("result[%d] = %f, expected %f", idx, v, expected[idx])
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}
+
+func TestFloat32TensorWorksWithNonMatMulOps(t *testing.T) {
+	engine, err := NewEngine()
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+	defer engine.Close()
+
+	input := NewTensorFromFloat32([]float32{-1.5, 0, 2.25})
+	got, err := engine.ReLU(context.Background(), input)
+	if err != nil {
+		t.Fatalf("ReLU failed: %v", err)
+	}
+
+	expected := []float64{0, 0, 2.25}
+	for i, v := range got.Data() {
+		if math.Abs(v-expected[i]) > 1e-5 {
+			t.Fatalf("result[%d] = %f, expected %f", i, v, expected[i])
+		}
 	}
 }
 

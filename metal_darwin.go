@@ -5,13 +5,17 @@ package rnxa
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 )
 
 type metalEngine struct {
 	device       Device
 	metalDevice  interface{} // Store as interface{} to hold CGO type
 	commandQueue interface{} // Store as interface{} to hold CGO type
+	mu           sync.Mutex
+	closed       bool
 }
 
 func newMetalEngine(device Device) (ComputeEngine, error) {
@@ -43,8 +47,23 @@ func (e *metalEngine) getCommandQueue() interface{} {
 	return e.commandQueue
 }
 
+func (e *metalEngine) withResources(fn func(device, queue interface{}) error) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed || e.metalDevice == nil || e.commandQueue == nil {
+		return errors.New("metal engine is closed")
+	}
+
+	return fn(e.metalDevice, e.commandQueue)
+}
+
 // Matrix multiplication - Core MLP operation
 func (e *metalEngine) MatMul(ctx context.Context, A, B *Tensor) (*Tensor, error) {
+	if A.DType() == Float32 && B.DType() == Float32 {
+		return e.matMulFloat32(ctx, A, B)
+	}
+
 	if len(A.Shape()) != 2 || len(B.Shape()) != 2 {
 		return nil, fmt.Errorf("MatMul requires 2D tensors")
 	}
@@ -58,26 +77,32 @@ func (e *metalEngine) MatMul(ctx context.Context, A, B *Tensor) (*Tensor, error)
 	C_result := Zeros(M, N)
 
 	// Convert float64 to float32 for Metal
-	A_f32 := make([]float32, len(A.data))
-	B_f32 := make([]float32, len(B.data))
+	AData := A.float64Data()
+	BData := B.float64Data()
+	A_f32 := make([]float32, len(AData))
+	B_f32 := make([]float32, len(BData))
 	C_f32 := make([]float32, len(C_result.data))
 
-	for i, v := range A.data {
+	for i, v := range AData {
 		A_f32[i] = float32(v)
 	}
-	for i, v := range B.data {
+	for i, v := range BData {
 		B_f32[i] = float32(v)
 	}
 
-	result := metalMatrixMultiply(
-		e.getMetalDevice(), e.getCommandQueue(),
-		A_f32, M, K1,
-		B_f32, K2, N,
-		C_f32,
-	)
-
-	if result != 0 {
-		return nil, fmt.Errorf("Metal matrix multiplication failed: %d", result)
+	if err := e.withResources(func(device, queue interface{}) error {
+		result := metalMatrixMultiply(
+			device, queue,
+			A_f32, M, K1,
+			B_f32, K2, N,
+			C_f32,
+		)
+		if result != 0 {
+			return fmt.Errorf("Metal matrix multiplication failed: %d", result)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	// Convert back to float64
@@ -86,6 +111,41 @@ func (e *metalEngine) MatMul(ctx context.Context, A, B *Tensor) (*Tensor, error)
 	}
 
 	return C_result, nil
+}
+
+func (e *metalEngine) matMulFloat32(ctx context.Context, A, B *Tensor) (*Tensor, error) {
+	_ = ctx
+
+	if len(A.Shape()) != 2 || len(B.Shape()) != 2 {
+		return nil, fmt.Errorf("MatMul requires 2D tensors")
+	}
+
+	M, K1 := A.Shape()[0], A.Shape()[1]
+	K2, N := B.Shape()[0], B.Shape()[1]
+	if K1 != K2 {
+		return nil, fmt.Errorf("incompatible matrix dimensions: (%d,%d) × (%d,%d)", M, K1, K2, N)
+	}
+
+	AData := A.float32Data()
+	BData := B.float32Data()
+	resultTensor := ZerosFloat32(M, N)
+	resultData := resultTensor.float32Data()
+	if err := e.withResources(func(device, queue interface{}) error {
+		result := metalMatrixMultiply(
+			device, queue,
+			AData, M, K1,
+			BData, K2, N,
+			resultData,
+		)
+		if result != 0 {
+			return fmt.Errorf("Metal matrix multiplication failed: %d", result)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return resultTensor, nil
 }
 
 // Vector operations for bias addition, etc.
@@ -97,24 +157,30 @@ func (e *metalEngine) VectorAdd(ctx context.Context, A, B *Tensor) (*Tensor, err
 	result := Zeros(A.Shape()...)
 
 	// Convert to float32
+	AData := A.float64Data()
+	BData := B.float64Data()
 	A_f32 := make([]float32, A.Size())
 	B_f32 := make([]float32, B.Size())
 	C_f32 := make([]float32, A.Size())
 
-	for i, v := range A.data {
+	for i, v := range AData {
 		A_f32[i] = float32(v)
 	}
-	for i, v := range B.data {
+	for i, v := range BData {
 		B_f32[i] = float32(v)
 	}
 
-	ret := metalVectorAdd(
-		e.getMetalDevice(), e.getCommandQueue(),
-		A_f32, B_f32, C_f32, A.Size(),
-	)
-
-	if ret != 0 {
-		return nil, fmt.Errorf("Metal vector add failed: %d", ret)
+	if err := e.withResources(func(device, queue interface{}) error {
+		ret := metalVectorAdd(
+			device, queue,
+			A_f32, B_f32, C_f32, A.Size(),
+		)
+		if ret != 0 {
+			return fmt.Errorf("Metal vector add failed: %d", ret)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	// Convert back to float64
@@ -132,24 +198,30 @@ func (e *metalEngine) VectorSub(ctx context.Context, A, B *Tensor) (*Tensor, err
 
 	result := Zeros(A.Shape()...)
 
+	AData := A.float64Data()
+	BData := B.float64Data()
 	A_f32 := make([]float32, A.Size())
 	B_f32 := make([]float32, B.Size())
 	C_f32 := make([]float32, A.Size())
 
-	for i, v := range A.data {
+	for i, v := range AData {
 		A_f32[i] = float32(v)
 	}
-	for i, v := range B.data {
+	for i, v := range BData {
 		B_f32[i] = float32(v)
 	}
 
-	ret := metalVectorSub(
-		e.getMetalDevice(), e.getCommandQueue(),
-		A_f32, B_f32, C_f32, A.Size(),
-	)
-
-	if ret != 0 {
-		return nil, fmt.Errorf("Metal vector sub failed: %d", ret)
+	if err := e.withResources(func(device, queue interface{}) error {
+		ret := metalVectorSub(
+			device, queue,
+			A_f32, B_f32, C_f32, A.Size(),
+		)
+		if ret != 0 {
+			return fmt.Errorf("Metal vector sub failed: %d", ret)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	for i, v := range C_f32 {
@@ -166,24 +238,30 @@ func (e *metalEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, err
 
 	result := Zeros(A.Shape()...)
 
+	AData := A.float64Data()
+	BData := B.float64Data()
 	A_f32 := make([]float32, A.Size())
 	B_f32 := make([]float32, B.Size())
 	C_f32 := make([]float32, A.Size())
 
-	for i, v := range A.data {
+	for i, v := range AData {
 		A_f32[i] = float32(v)
 	}
-	for i, v := range B.data {
+	for i, v := range BData {
 		B_f32[i] = float32(v)
 	}
 
-	ret := metalVectorMul(
-		e.getMetalDevice(), e.getCommandQueue(),
-		A_f32, B_f32, C_f32, A.Size(),
-	)
-
-	if ret != 0 {
-		return nil, fmt.Errorf("Metal vector mul failed: %d", ret)
+	if err := e.withResources(func(device, queue interface{}) error {
+		ret := metalVectorMul(
+			device, queue,
+			A_f32, B_f32, C_f32, A.Size(),
+		)
+		if ret != 0 {
+			return fmt.Errorf("Metal vector mul failed: %d", ret)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	for i, v := range C_f32 {
@@ -197,20 +275,25 @@ func (e *metalEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, err
 func (e *metalEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
+	XData := X.float64Data()
 	X_f32 := make([]float32, X.Size())
 	Y_f32 := make([]float32, X.Size())
 
-	for i, v := range X.data {
+	for i, v := range XData {
 		X_f32[i] = float32(v)
 	}
 
-	success := metalReLU(
-		e.getMetalDevice(), e.getCommandQueue(),
-		X_f32, Y_f32, X.Size(),
-	)
-
-	if success != 0 {
-		return nil, fmt.Errorf("Metal ReLU failed")
+	if err := e.withResources(func(device, queue interface{}) error {
+		success := metalReLU(
+			device, queue,
+			X_f32, Y_f32, X.Size(),
+		)
+		if success != 0 {
+			return fmt.Errorf("Metal ReLU failed")
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	for i, v := range Y_f32 {
@@ -223,20 +306,25 @@ func (e *metalEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
 func (e *metalEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
+	XData := X.float64Data()
 	X_f32 := make([]float32, X.Size())
 	Y_f32 := make([]float32, X.Size())
 
-	for i, v := range X.data {
+	for i, v := range XData {
 		X_f32[i] = float32(v)
 	}
 
-	success := metalSigmoid(
-		e.getMetalDevice(), e.getCommandQueue(),
-		X_f32, Y_f32, X.Size(),
-	)
-
-	if success != 0 {
-		return nil, fmt.Errorf("Metal Sigmoid failed")
+	if err := e.withResources(func(device, queue interface{}) error {
+		success := metalSigmoid(
+			device, queue,
+			X_f32, Y_f32, X.Size(),
+		)
+		if success != 0 {
+			return fmt.Errorf("Metal Sigmoid failed")
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	for i, v := range Y_f32 {
@@ -249,20 +337,25 @@ func (e *metalEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
 func (e *metalEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
+	XData := X.float64Data()
 	X_f32 := make([]float32, X.Size())
 	Y_f32 := make([]float32, X.Size())
 
-	for i, v := range X.data {
+	for i, v := range XData {
 		X_f32[i] = float32(v)
 	}
 
-	success := metalTanh(
-		e.getMetalDevice(), e.getCommandQueue(),
-		X_f32, Y_f32, X.Size(),
-	)
-
-	if success != 0 {
-		return nil, fmt.Errorf("Metal Tanh failed")
+	if err := e.withResources(func(device, queue interface{}) error {
+		success := metalTanh(
+			device, queue,
+			X_f32, Y_f32, X.Size(),
+		)
+		if success != 0 {
+			return fmt.Errorf("Metal Tanh failed")
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	for i, v := range Y_f32 {
@@ -275,20 +368,25 @@ func (e *metalEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
 func (e *metalEngine) Softmax(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
+	XData := X.float64Data()
 	X_f32 := make([]float32, X.Size())
 	Y_f32 := make([]float32, X.Size())
 
-	for i, v := range X.data {
+	for i, v := range XData {
 		X_f32[i] = float32(v)
 	}
 
-	success := metalSoftmax(
-		e.getMetalDevice(), e.getCommandQueue(),
-		X_f32, Y_f32, X.Size(),
-	)
-
-	if success != 0 {
-		return nil, fmt.Errorf("Metal Softmax failed")
+	if err := e.withResources(func(device, queue interface{}) error {
+		success := metalSoftmax(
+			device, queue,
+			X_f32, Y_f32, X.Size(),
+		)
+		if success != 0 {
+			return fmt.Errorf("Metal Softmax failed")
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	for i, v := range Y_f32 {
@@ -309,24 +407,43 @@ func (e *metalEngine) Mean(ctx context.Context, X *Tensor, axis int) (*Tensor, e
 	return newCPUEngine().Mean(ctx, X, axis)
 }
 
-func (e *metalEngine) Device() Device  { return e.device }
-func (e *metalEngine) Available() bool { return e.metalDevice != nil }
+func (e *metalEngine) Device() Device { return e.device }
+
+func (e *metalEngine) Available() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.closed && e.metalDevice != nil
+}
 
 func (e *metalEngine) Memory() MemoryInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed || e.metalDevice == nil {
+		return MemoryInfo{}
+	}
+
 	return MemoryInfo{
-		Total:     metalGetTotalMemory(e.getMetalDevice()),
-		Available: metalGetAvailableMemory(e.getMetalDevice()),
+		Total:     metalGetTotalMemory(e.metalDevice),
+		Available: metalGetAvailableMemory(e.metalDevice),
 	}
 }
 
 func (e *metalEngine) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.closed {
+		return nil
+	}
 	if e.commandQueue != nil {
-		metalReleaseCommandQueue(e.getCommandQueue())
+		metalReleaseCommandQueue(e.commandQueue)
 		e.commandQueue = nil
 	}
 	if e.metalDevice != nil {
-		metalReleaseDevice(e.getMetalDevice())
+		metalReleaseDevice(e.metalDevice)
 		e.metalDevice = nil
 	}
+	e.closed = true
 	return nil
 }
