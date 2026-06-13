@@ -16,15 +16,32 @@ func DetectDevices() []Device {
 		cores := metalGetDeviceCoresSafe(metalDevice)
 		memory := estimateDeviceMemory(name)
 
-		device := Device{
+		// Report the same physical hardware as two devices: MPS
+		// first (Apple's hand-tuned kernel — preferred when the
+		// libmps.dylib is built), then Metal as a fallback for
+		// shapes MPS doesn't support. The dispatcher in NewEngine
+		// picks the first whose engine reports Available(); if the
+		// MPS shim library isn't built, mpsEngine's Available()
+		// returns false and the loop falls through to Metal.
+		mpsDevice := Device{
 			ID:       0,
+			Name:     name,
+			Type:     GPU,
+			Memory:   memory,
+			Cores:    cores,
+			Platform: "MPS",
+		}
+		devices = append(devices, mpsDevice)
+
+		metalDev := Device{
+			ID:       len(devices),
 			Name:     name,
 			Type:     GPU,
 			Memory:   memory,
 			Cores:    cores,
 			Platform: "Metal",
 		}
-		devices = append(devices, device)
+		devices = append(devices, metalDev)
 	}
 
 	// Always include CPU as fallback

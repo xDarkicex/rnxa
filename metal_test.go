@@ -238,9 +238,10 @@ func TestMatMulAfterCloseReturnsError(t *testing.T) {
 	A := NewTensor([]float64{1, 2, 3, 4}, 2, 2)
 	B := NewTensor([]float64{5, 6, 7, 8}, 2, 2)
 	_, err = engine.MatMul(context.Background(), A, B)
-	if engine.Device().Platform == "Metal" {
+	plat := engine.Device().Platform
+	if plat == "Metal" || plat == "MPS" {
 		if err == nil {
-			t.Fatal("expected error after closing Metal engine")
+			t.Fatalf("expected error after closing %s engine", plat)
 		}
 		if !strings.Contains(err.Error(), "closed") {
 			t.Fatalf("expected closed-engine error, got %v", err)
@@ -425,6 +426,34 @@ func BenchmarkMatMulMedium(b *testing.B) {
 
 	A := NewTensor(make([]float64, 128*128), 128, 128)
 	B := NewTensor(make([]float64, 128*128), 128, 128)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine.MatMul(ctx, A, B)
+	}
+}
+
+func BenchmarkMatMulLarge(b *testing.B) {
+	engine, _ := NewEngine()
+	defer engine.Close()
+
+	A := NewTensor(make([]float64, 1024*1024), 1024, 1024)
+	B := NewTensor(make([]float64, 1024*1024), 1024, 1024)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine.MatMul(ctx, A, B)
+	}
+}
+
+func BenchmarkMatMulLargeFloat32(b *testing.B) {
+	engine, _ := NewEngine()
+	defer engine.Close()
+
+	A := NewTensorFromFloat32(make([]float32, 1024*1024), 1024, 1024)
+	B := NewTensorFromFloat32(make([]float32, 1024*1024), 1024, 1024)
 	ctx := context.Background()
 
 	b.ResetTimer()

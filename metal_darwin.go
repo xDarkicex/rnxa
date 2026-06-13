@@ -76,19 +76,13 @@ func (e *metalEngine) MatMul(ctx context.Context, A, B *Tensor) (*Tensor, error)
 
 	C_result := Zeros(M, N)
 
-	// Convert float64 to float32 for Metal
-	AData := A.float64Data()
-	BData := B.float64Data()
-	A_f32 := make([]float32, len(AData))
-	B_f32 := make([]float32, len(BData))
-	C_f32 := make([]float32, len(C_result.data))
-
-	for i, v := range AData {
-		A_f32[i] = float32(v)
-	}
-	for i, v := range BData {
-		B_f32[i] = float32(v)
-	}
+	// Metal is a float32 API. Float64 inputs are converted to float32 for
+	// the kernel and the result is upcast back. The conversion is lossy
+	// (~7 decimal digits of precision); callers that need true float64
+	// precision should use the CPU backend or pre-quantize their inputs.
+	A_f32 := toFloat32(A)
+	B_f32 := toFloat32(B)
+	C_f32 := make([]float32, C_result.Size())
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		result := metalMatrixMultiply(
@@ -105,7 +99,7 @@ func (e *metalEngine) MatMul(ctx context.Context, A, B *Tensor) (*Tensor, error)
 		return nil, err
 	}
 
-	// Convert back to float64
+	// Convert back to float64 (lossy upcast, see precision note above).
 	for i, v := range C_f32 {
 		C_result.data[i] = float64(v)
 	}
@@ -156,19 +150,10 @@ func (e *metalEngine) VectorAdd(ctx context.Context, A, B *Tensor) (*Tensor, err
 
 	result := Zeros(A.Shape()...)
 
-	// Convert to float32
-	AData := A.float64Data()
-	BData := B.float64Data()
-	A_f32 := make([]float32, A.Size())
-	B_f32 := make([]float32, B.Size())
+	// See precision note in MatMul above.
+	A_f32 := toFloat32(A)
+	B_f32 := toFloat32(B)
 	C_f32 := make([]float32, A.Size())
-
-	for i, v := range AData {
-		A_f32[i] = float32(v)
-	}
-	for i, v := range BData {
-		B_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		ret := metalVectorAdd(
@@ -183,7 +168,6 @@ func (e *metalEngine) VectorAdd(ctx context.Context, A, B *Tensor) (*Tensor, err
 		return nil, err
 	}
 
-	// Convert back to float64
 	for i, v := range C_f32 {
 		result.data[i] = float64(v)
 	}
@@ -198,18 +182,10 @@ func (e *metalEngine) VectorSub(ctx context.Context, A, B *Tensor) (*Tensor, err
 
 	result := Zeros(A.Shape()...)
 
-	AData := A.float64Data()
-	BData := B.float64Data()
-	A_f32 := make([]float32, A.Size())
-	B_f32 := make([]float32, B.Size())
+	// See precision note in MatMul above.
+	A_f32 := toFloat32(A)
+	B_f32 := toFloat32(B)
 	C_f32 := make([]float32, A.Size())
-
-	for i, v := range AData {
-		A_f32[i] = float32(v)
-	}
-	for i, v := range BData {
-		B_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		ret := metalVectorSub(
@@ -238,18 +214,10 @@ func (e *metalEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, err
 
 	result := Zeros(A.Shape()...)
 
-	AData := A.float64Data()
-	BData := B.float64Data()
-	A_f32 := make([]float32, A.Size())
-	B_f32 := make([]float32, B.Size())
+	// See precision note in MatMul above.
+	A_f32 := toFloat32(A)
+	B_f32 := toFloat32(B)
 	C_f32 := make([]float32, A.Size())
-
-	for i, v := range AData {
-		A_f32[i] = float32(v)
-	}
-	for i, v := range BData {
-		B_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		ret := metalVectorMul(
@@ -275,13 +243,9 @@ func (e *metalEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, err
 func (e *metalEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
-	XData := X.float64Data()
-	X_f32 := make([]float32, X.Size())
+	// See precision note in MatMul above.
+	X_f32 := toFloat32(X)
 	Y_f32 := make([]float32, X.Size())
-
-	for i, v := range XData {
-		X_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		success := metalReLU(
@@ -306,13 +270,9 @@ func (e *metalEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
 func (e *metalEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
-	XData := X.float64Data()
-	X_f32 := make([]float32, X.Size())
+	// See precision note in MatMul above.
+	X_f32 := toFloat32(X)
 	Y_f32 := make([]float32, X.Size())
-
-	for i, v := range XData {
-		X_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		success := metalSigmoid(
@@ -337,13 +297,9 @@ func (e *metalEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
 func (e *metalEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
-	XData := X.float64Data()
-	X_f32 := make([]float32, X.Size())
+	// See precision note in MatMul above.
+	X_f32 := toFloat32(X)
 	Y_f32 := make([]float32, X.Size())
-
-	for i, v := range XData {
-		X_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		success := metalTanh(
@@ -368,13 +324,9 @@ func (e *metalEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
 func (e *metalEngine) Softmax(ctx context.Context, X *Tensor) (*Tensor, error) {
 	result := Zeros(X.Shape()...)
 
-	XData := X.float64Data()
-	X_f32 := make([]float32, X.Size())
+	// See precision note in MatMul above.
+	X_f32 := toFloat32(X)
 	Y_f32 := make([]float32, X.Size())
-
-	for i, v := range XData {
-		X_f32[i] = float32(v)
-	}
 
 	if err := e.withResources(func(device, queue interface{}) error {
 		success := metalSoftmax(
@@ -396,14 +348,13 @@ func (e *metalEngine) Softmax(ctx context.Context, X *Tensor) (*Tensor, error) {
 	return result, nil
 }
 
-// Simple implementations for Sum/Mean
+// Sum and Mean delegate to the CPU engine's axis-aware implementation;
+// the Metal backend doesn't ship dedicated reduction kernels yet.
 func (e *metalEngine) Sum(ctx context.Context, X *Tensor, axis int) (*Tensor, error) {
-	// Use CPU fallback for now - focus on core MLP operations
 	return newCPUEngine().Sum(ctx, X, axis)
 }
 
 func (e *metalEngine) Mean(ctx context.Context, X *Tensor, axis int) (*Tensor, error) {
-	// Use CPU fallback for now - focus on core MLP operations
 	return newCPUEngine().Mean(ctx, X, axis)
 }
 

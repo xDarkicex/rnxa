@@ -59,8 +59,8 @@ func (e *cpuEngine) VectorAdd(ctx context.Context, A, B *Tensor) (*Tensor, error
 		return nil, fmt.Errorf("tensor sizes must match")
 	}
 
-	AData := A.float64Data()
-	BData := B.float64Data()
+	AData := toFloat64(A)
+	BData := toFloat64(B)
 	result := Zeros(A.Shape()...)
 	for i := 0; i < A.Size(); i++ {
 		result.data[i] = AData[i] + BData[i]
@@ -73,8 +73,8 @@ func (e *cpuEngine) VectorSub(ctx context.Context, A, B *Tensor) (*Tensor, error
 		return nil, fmt.Errorf("tensor sizes must match")
 	}
 
-	AData := A.float64Data()
-	BData := B.float64Data()
+	AData := toFloat64(A)
+	BData := toFloat64(B)
 	result := Zeros(A.Shape()...)
 	for i := 0; i < A.Size(); i++ {
 		result.data[i] = AData[i] - BData[i]
@@ -87,8 +87,8 @@ func (e *cpuEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, error
 		return nil, fmt.Errorf("tensor sizes must match")
 	}
 
-	AData := A.float64Data()
-	BData := B.float64Data()
+	AData := toFloat64(A)
+	BData := toFloat64(B)
 	result := Zeros(A.Shape()...)
 	for i := 0; i < A.Size(); i++ {
 		result.data[i] = AData[i] * BData[i]
@@ -97,7 +97,7 @@ func (e *cpuEngine) VectorMul(ctx context.Context, A, B *Tensor) (*Tensor, error
 }
 
 func (e *cpuEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
-	XData := X.float64Data()
+	XData := toFloat64(X)
 	result := Zeros(X.Shape()...)
 	for i := 0; i < X.Size(); i++ {
 		if XData[i] > 0 {
@@ -110,7 +110,7 @@ func (e *cpuEngine) ReLU(ctx context.Context, X *Tensor) (*Tensor, error) {
 }
 
 func (e *cpuEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
-	XData := X.float64Data()
+	XData := toFloat64(X)
 	result := Zeros(X.Shape()...)
 	for i := 0; i < X.Size(); i++ {
 		result.data[i] = 1.0 / (1.0 + math.Exp(-XData[i]))
@@ -119,7 +119,7 @@ func (e *cpuEngine) Sigmoid(ctx context.Context, X *Tensor) (*Tensor, error) {
 }
 
 func (e *cpuEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
-	XData := X.float64Data()
+	XData := toFloat64(X)
 	result := Zeros(X.Shape()...)
 	for i := 0; i < X.Size(); i++ {
 		result.data[i] = math.Tanh(XData[i])
@@ -128,7 +128,7 @@ func (e *cpuEngine) Tanh(ctx context.Context, X *Tensor) (*Tensor, error) {
 }
 
 func (e *cpuEngine) Softmax(ctx context.Context, X *Tensor) (*Tensor, error) {
-	XData := X.float64Data()
+	XData := toFloat64(X)
 	result := Zeros(X.Shape()...)
 
 	// Find max for numerical stability
@@ -155,28 +155,18 @@ func (e *cpuEngine) Softmax(ctx context.Context, X *Tensor) (*Tensor, error) {
 }
 
 func (e *cpuEngine) Sum(ctx context.Context, X *Tensor, axis int) (*Tensor, error) {
-	// Simple sum across all elements for now
-	XData := X.float64Data()
-	sum := 0.0
-	for i := 0; i < X.Size(); i++ {
-		sum += XData[i]
-	}
-	return NewTensor([]float64{sum}), nil
+	return reduceSum(X, axis)
 }
 
 func (e *cpuEngine) Mean(ctx context.Context, X *Tensor, axis int) (*Tensor, error) {
-	XData := X.float64Data()
-	sum := 0.0
-	for i := 0; i < X.Size(); i++ {
-		sum += XData[i]
-	}
-	mean := sum / float64(X.Size())
-	return NewTensor([]float64{mean}), nil
+	return reduceMean(X, axis)
 }
 
 func (e *cpuEngine) Device() Device  { return e.device }
 func (e *cpuEngine) Available() bool { return true }
 func (e *cpuEngine) Memory() MemoryInfo {
+	// TODO: query actual host RAM via OS-specific syscalls
+	// (syscall.Sysctl("hw.memsize") on darwin, /proc/meminfo on linux).
 	return MemoryInfo{Total: 8 * 1024 * 1024 * 1024, Available: 6 * 1024 * 1024 * 1024}
 }
 func (e *cpuEngine) Close() error { return nil }

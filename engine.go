@@ -63,15 +63,29 @@ func NewEngine() (ComputeEngine, error) {
 		return newCPUEngine(), nil // Always have CPU fallback
 	}
 
-	// Prioritize: Metal (M2) > CUDA > OpenCL > CPU
+	// Try every detected backend in priority order, falling through on
+	// failure so a not-yet-implemented CUDA/OpenCL backend doesn't block
+	// Metal. Today only Metal and CPU have real engines; the others return
+	// "not implemented" errors that we skip past.
 	for _, device := range devices {
+		var (
+			engine ComputeEngine
+			err    error
+		)
 		switch device.Platform {
+		case "MPS":
+			engine, err = newMPSEngine(device)
 		case "Metal":
-			return newMetalEngine(device)
+			engine, err = newMetalEngine(device)
 		case "CUDA":
-			return newCUDAEngine(device)
+			engine, err = newCUDAEngine(device)
 		case "OpenCL":
-			return newOpenCLEngine(device)
+			engine, err = newOpenCLEngine(device)
+		default:
+			continue
+		}
+		if err == nil && engine != nil {
+			return engine, nil
 		}
 	}
 
@@ -96,10 +110,9 @@ func NewEngineWithDevice(deviceID int) (ComputeEngine, error) {
 	}
 }
 
-func newCUDAEngine(device Device) (ComputeEngine, error) {
-	return nil, fmt.Errorf("CUDA support not implemented yet")
-}
-
 func newOpenCLEngine(device Device) (ComputeEngine, error) {
 	return nil, fmt.Errorf("OpenCL support not implemented yet")
 }
+
+// newCUDAEngine is defined in cuda_engine_linux.go (linux) and
+// cuda_engine_other.go (non-linux stub).
